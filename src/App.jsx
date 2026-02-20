@@ -573,6 +573,17 @@ tr:hover td{background:rgba(255,255,255,0.02)}
 .btn-primary-dash{display:inline-flex;align-items:center;gap:0.5rem;padding:0.75rem 1.8rem;border:none;border-radius:4px;background:linear-gradient(135deg,var(--violet),var(--cyan2));color:#fff;font-family:'Rajdhani',sans-serif;font-size:0.82rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;box-shadow:0 4px 20px rgba(123,47,255,0.4);transition:all 0.25s;margin-top:0.5rem}
 .btn-primary-dash:hover{box-shadow:0 6px 30px rgba(123,47,255,0.6);transform:translateY(-1px)}
 
+/* Author photo editor */
+.author-photo-editor{display:grid;grid-template-columns:160px 1fr;gap:1.5rem;align-items:start;margin-top:0.2rem}
+.author-photo-preview{position:relative;width:160px;aspect-ratio:3/4;border-radius:6px;overflow:hidden;background:linear-gradient(140deg,#1a1128,#0d0d1a);border:1px solid var(--border);flex-shrink:0}
+.author-photo-img{width:100%;height:100%;object-fit:cover;display:block}
+.author-photo-ph{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0.6rem;padding:1rem}
+.author-photo-ph span{font-family:'Rajdhani',sans-serif;font-size:0.7rem;color:var(--muted);letter-spacing:0.08em;text-align:center}
+.author-photo-remove{position:absolute;top:0.4rem;right:0.4rem;width:24px;height:24px;border-radius:50%;background:rgba(255,45,122,0.85);border:none;color:#fff;font-size:0.65rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.2s}
+.author-photo-remove:hover{background:var(--magenta)}
+.author-photo-controls{display:flex;flex-direction:column;justify-content:flex-start}
+@media(max-width:600px){.author-photo-editor{grid-template-columns:1fr}.author-photo-preview{width:100%;aspect-ratio:3/2}}
+
 /* Security tab */
 .security-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:2rem;max-width:500px}
 .security-card h3{font-family:'Bebas Neue',sans-serif;font-size:1.2rem;letter-spacing:0.06em;color:var(--text);margin-bottom:0.4rem}
@@ -1156,7 +1167,24 @@ function PasswordForm({ onPasswordChanged }) {
 }
 function AuthorForm({ author, onSave }) {
   const [f, setF] = useState(author);
+  const [photoTab, setPhotoTab] = useState("url");
+  const [saved, setSaved] = useState(false);
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const handlePhotoFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => s("photoUrl", ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = () => {
+    onSave(f);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
   return (
     <div>
       <div className="fr2">
@@ -1166,8 +1194,55 @@ function AuthorForm({ author, onSave }) {
       <div className="ff"><label>Email Address</label><input value={f.email} onChange={e => s("email", e.target.value)} /></div>
       <div className="ff"><label>Bio — Paragraph 1</label><textarea value={f.bio1} onChange={e => s("bio1", e.target.value)} /></div>
       <div className="ff"><label>Bio — Paragraph 2</label><textarea value={f.bio2} onChange={e => s("bio2", e.target.value)} /></div>
-      <div className="ff"><label>Author Photo URL (optional)</label><input value={f.photoUrl} onChange={e => s("photoUrl", e.target.value)} placeholder="https://..." /></div>
-      <button className="btn-primary-dash" onClick={() => onSave(f)}>Save Changes ✓</button>
+
+      {/* ── Author Photo ── */}
+      <div className="ff">
+        <label>Author Photo</label>
+        <div className="author-photo-editor">
+          {/* Preview */}
+          <div className="author-photo-preview">
+            {f.photoUrl
+              ? <img src={f.photoUrl} alt="Author preview" className="author-photo-img" />
+              : <div className="author-photo-ph">
+                  <svg width="48" height="48" viewBox="0 0 80 80" fill="none" stroke="#7b2fff" strokeWidth="1.5">
+                    <circle cx="40" cy="28" r="18"/><path d="M8 72c0-17.673 14.327-32 32-32s32 14.327 32 32"/>
+                  </svg>
+                  <span>No photo yet</span>
+                </div>}
+            {f.photoUrl && (
+              <button className="author-photo-remove" onClick={() => s("photoUrl", "")} title="Remove photo">✕</button>
+            )}
+          </div>
+
+          {/* Upload tabs */}
+          <div className="author-photo-controls">
+            <div className="img-upload-tabs" style={{ marginBottom: "0.6rem" }}>
+              <button type="button" className={`img-upload-tab ${photoTab === "url" ? "on" : ""}`} onClick={() => setPhotoTab("url")}>🔗 Paste URL</button>
+              <button type="button" className={`img-upload-tab ${photoTab === "upload" ? "on" : ""}`} onClick={() => setPhotoTab("upload")}>📁 Upload File</button>
+            </div>
+            {photoTab === "url" && (
+              <input
+                value={f.photoUrl?.startsWith("data:") ? "" : (f.photoUrl || "")}
+                onChange={e => s("photoUrl", e.target.value)}
+                placeholder="https://example.com/photo.jpg"
+              />
+            )}
+            {photoTab === "upload" && (
+              <label className="file-input-label">
+                <span>📂</span>
+                <span>{f.photoUrl ? "Change Photo" : "Choose Photo"}</span>
+                <input type="file" accept="image/*" onChange={handlePhotoFile} />
+              </label>
+            )}
+            <p style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.72rem", color: "var(--muted)", marginTop: "0.5rem", letterSpacing: "0.04em" }}>
+              Recommended: square or portrait image, at least 400×500px
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {saved && <div className="pw-success" style={{ marginBottom: "0.8rem" }}>✓ Author info saved successfully!</div>}
+      <button className="btn-primary-dash" onClick={handleSave}>Save Changes ✓</button>
     </div>
   );
 }
