@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 
 // ══════════════════════════════════════════════
-//  ✏️  SET YOUR ADMIN PASSWORD HERE
-const ADMIN_PASSWORD = "admin123";
+//  ✏️  DEFAULT ADMIN PASSWORD (first-time only)
+//  Once changed in the dashboard, the new
+//  password is saved and this line is ignored.
+const DEFAULT_ADMIN_PASSWORD = "admin123";
 // ══════════════════════════════════════════════
 
 /* ─────────────────────────────────────────────
@@ -15,6 +17,9 @@ const sGet = (k) => {
 const sSet = (k, v) => {
   try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
 };
+
+// Always read the live password from storage (falls back to default)
+const getAdminPassword = () => sGet("rm_password") || DEFAULT_ADMIN_PASSWORD;
 
 /* ─────────────────────────────────────────────
    DEFAULT DATA
@@ -568,6 +573,29 @@ tr:hover td{background:rgba(255,255,255,0.02)}
 .btn-primary-dash{display:inline-flex;align-items:center;gap:0.5rem;padding:0.75rem 1.8rem;border:none;border-radius:4px;background:linear-gradient(135deg,var(--violet),var(--cyan2));color:#fff;font-family:'Rajdhani',sans-serif;font-size:0.82rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;box-shadow:0 4px 20px rgba(123,47,255,0.4);transition:all 0.25s;margin-top:0.5rem}
 .btn-primary-dash:hover{box-shadow:0 6px 30px rgba(123,47,255,0.6);transform:translateY(-1px)}
 
+/* Security tab */
+.security-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:2rem;max-width:500px}
+.security-card h3{font-family:'Bebas Neue',sans-serif;font-size:1.2rem;letter-spacing:0.06em;color:var(--text);margin-bottom:0.4rem}
+.security-card .sec-desc{font-family:'Rajdhani',sans-serif;font-size:0.82rem;color:var(--muted);letter-spacing:0.04em;margin-bottom:1.8rem;line-height:1.6}
+.pw-rules{margin:0.6rem 0 1.2rem;padding:0.9rem 1rem;border-radius:4px;background:rgba(123,47,255,0.06);border:1px solid rgba(123,47,255,0.15)}
+.pw-rules p{font-family:'Rajdhani',sans-serif;font-size:0.72rem;color:var(--muted);letter-spacing:0.04em;line-height:1.7}
+.pw-rules p span{color:var(--cyan)}
+.pw-match{font-family:'Rajdhani',sans-serif;font-size:0.75rem;margin-top:0.4rem;letter-spacing:0.06em}
+.pw-match.ok{color:#22c55e}
+.pw-match.no{color:var(--magenta)}
+.pw-success{
+  display:flex;align-items:center;gap:0.7rem;
+  padding:0.9rem 1.1rem;border-radius:6px;margin-top:1rem;
+  background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.25);
+  font-family:'Rajdhani',sans-serif;font-size:0.88rem;font-weight:600;
+  color:#22c55e;letter-spacing:0.06em;animation:fadeIn 0.3s ease;
+}
+.pw-strength{display:flex;gap:3px;margin-top:0.5rem}
+.pw-strength-bar{height:3px;flex:1;border-radius:2px;background:rgba(255,255,255,0.08);transition:background 0.3s}
+.pw-strength-bar.w{background:var(--magenta)}
+.pw-strength-bar.m{background:var(--gold)}
+.pw-strength-bar.s{background:#22c55e}
+
 /* Responsive */
 @media(max-width:900px){
   .nav{padding:0 1.5rem}
@@ -672,7 +700,7 @@ export default function App() {
   };
 
   const handleLogin = () => {
-    if (passInput.trim() === ADMIN_PASSWORD) {
+    if (passInput.trim() === getAdminPassword()) {
       setAdminState("dash"); setPassErr(""); setPassInput("");
     } else {
       setPassErr("Incorrect password. Please try again.");
@@ -916,7 +944,7 @@ export default function App() {
               </div>
             </div>
             <div className="tabs">
-              {[["analytics","📈 Analytics"],["books","📚 Manage Books"],["author","✍ Author Info"]].map(([k,l]) => (
+              {[["analytics","📈 Analytics"],["books","📚 Manage Books"],["author","✍ Author Info"],["security","🔑 Security"]].map(([k,l]) => (
                 <button key={k} className={`tab ${adminTab === k ? "on" : ""}`} onClick={() => setAdminTab(k)}>{l}</button>
               ))}
             </div>
@@ -971,6 +999,9 @@ export default function App() {
                 <h3>Edit Author Information</h3>
                 <AuthorForm author={author} onSave={setAuthor} />
               </div>
+            )}
+            {adminTab === "security" && (
+              <PasswordForm onPasswordChanged={() => setAdminTab("analytics")} />
             )}
           </div>
         </div>
@@ -1043,8 +1074,86 @@ function BookForm({ book, onSave, onCancel }) {
 }
 
 /* ─────────────────────────────────────────────
-   AUTHOR FORM
+   PASSWORD FORM
 ───────────────────────────────────────────── */
+function PasswordForm({ onPasswordChanged }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [err, setErr] = useState("");
+  const [success, setSuccess] = useState(false);
+
+  const strength = (pw) => {
+    let score = 0;
+    if (pw.length >= 8) score++;
+    if (/[A-Z]/.test(pw)) score++;
+    if (/[0-9]/.test(pw)) score++;
+    if (/[^A-Za-z0-9]/.test(pw)) score++;
+    return score; // 0-4
+  };
+  const s = strength(next);
+  const strengthLabel = ["", "Weak", "Fair", "Good", "Strong"][s] || "";
+  const strengthClass = s <= 1 ? "w" : s <= 2 ? "m" : "s";
+
+  const matches = next && confirm && next === confirm;
+  const doesntMatch = next && confirm && next !== confirm;
+
+  const handleSave = () => {
+    setErr("");
+    if (current !== getAdminPassword()) { setErr("Current password is incorrect."); return; }
+    if (next.length < 6) { setErr("New password must be at least 6 characters."); return; }
+    if (next !== confirm) { setErr("Passwords do not match."); return; }
+    sSet("rm_password", next);
+    setSuccess(true);
+    setCurrent(""); setNext(""); setConfirm("");
+    setTimeout(() => { setSuccess(false); onPasswordChanged(); }, 2500);
+  };
+
+  return (
+    <div className="security-card">
+      <h3>🔑 Change Password</h3>
+      <p className="sec-desc">Update your admin password. You'll need your current password to make changes. Pick something strong — you're the only one who should be getting in here.</p>
+
+      <div className="ff">
+        <label>Current Password</label>
+        <input type="password" value={current} onChange={e => { setCurrent(e.target.value); setErr(""); }} placeholder="Your current password..." />
+      </div>
+
+      <div className="ff">
+        <label>New Password</label>
+        <input type="password" value={next} onChange={e => { setNext(e.target.value); setErr(""); }} placeholder="Choose a new password..." />
+        {next && (
+          <>
+            <div className="pw-strength">
+              {[1,2,3,4].map(i => <div key={i} className={`pw-strength-bar ${i <= s ? strengthClass : ""}`} />)}
+            </div>
+            <p className="pw-match" style={{ color: s <= 1 ? "var(--magenta)" : s <= 2 ? "var(--gold)" : "#22c55e" }}>
+              {strengthLabel}
+            </p>
+          </>
+        )}
+        <div className="pw-rules">
+          <p><span>Tips:</span> Use 8+ characters, a mix of uppercase, numbers, and symbols for a strong password.</p>
+        </div>
+      </div>
+
+      <div className="ff">
+        <label>Confirm New Password</label>
+        <input type="password" value={confirm} onChange={e => { setConfirm(e.target.value); setErr(""); }} placeholder="Repeat new password..." />
+        {matches && <p className="pw-match ok">✓ Passwords match</p>}
+        {doesntMatch && <p className="pw-match no">✗ Passwords don't match</p>}
+      </div>
+
+      {err && <p className="login-err" style={{ marginBottom: "0.8rem" }}>⚠ {err}</p>}
+      {success && <div className="pw-success">✓ Password updated successfully! Redirecting...</div>}
+
+      <button className="btn-primary-dash" onClick={handleSave} disabled={success}
+        style={{ opacity: success ? 0.5 : 1, cursor: success ? "default" : "pointer" }}>
+        Update Password
+      </button>
+    </div>
+  );
+}
 function AuthorForm({ author, onSave }) {
   const [f, setF] = useState(author);
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
