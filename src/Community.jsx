@@ -1,24 +1,22 @@
 import { useState, useEffect, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
 
 /* ─────────────────────────────────────────────
-   STORAGE
+   SUPABASE CLIENT
 ───────────────────────────────────────────── */
-const sGet = (k) => {
-  try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; }
-  catch { return null; }
-};
-const sSet = (k, v) => {
-  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
-};
+const SUPABASE_URL = "https://aanksddaitghblfrarvj.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhbmtzZGRhaXRnaGJsZnJhcnZqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2MjE2MDgsImV4cCI6MjA4NzE5NzYwOH0.9U7TdjAd-r4nVhI9VEAa77DBA6Kp5eEsit9FPOZM1N8";
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Navigation helper
 const goTo = (path) => {
-  if (typeof window.__navigate === 'function') {
-    window.__navigate(path);
-  } else {
-    window.location.href = path;
-  }
+  if (typeof window.__navigate === "function") window.__navigate(path);
+  else window.location.href = path;
 };
+
+// localStorage for user profile only (device-specific is correct for this)
+const lGet = (k) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
+const lSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
 /* ─────────────────────────────────────────────
    CONSTANTS
@@ -394,65 +392,114 @@ const QUICK_REACTIONS = ["🔥","💀","👁️","⚡","🏹","💜","😭","�
 const EMOJI_LIST = ["🔥","💀","👁️","⚡","🏹","💜","😭","🤯","🐺","🦅","🐉","🗡️","🌑","🌊","🕷️","🔮","💯","😤","🥶","😈","👏","❤️","😂","🎯","🤔","👀","✨","💪"];
 
 /* ─────────────────────────────────────────────
+   HELPERS
+───────────────────────────────────────────── */
+const fmtTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const fmtDate = (ts) => {
+  const d = new Date(ts), now = new Date();
+  if (d.toDateString() === now.toDateString()) return "Today";
+  const y = new Date(now); y.setDate(y.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return "Yesterday";
+  return d.toLocaleDateString([], { month: "long", day: "numeric" });
+};
+const isEmojiOnly = (text) => /^(\p{Emoji_Presentation}|\p{Extended_Pictographic}|\s)+$/u.test(text.trim()) && text.trim().length <= 8;
+const genId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+// Map DB row → message object
+const rowToMsg = (r) => ({
+  id: r.id, roomId: r.room_id, userId: r.user_id,
+  userName: r.user_name, userColor: r.user_color, userAvatar: r.user_avatar,
+  text: r.text, imgUrl: r.img_url, ts: new Date(r.created_at).getTime(),
+  reactions: r.reactions || {},
+});
+
+/* ─────────────────────────────────────────────
    MAIN
 ───────────────────────────────────────────── */
 export default function Community() {
-  // User state
-  const [user, setUser] = useState(() => sGet("rm_chat_user") || null);
+  const [user, setUser] = useState(() => lGet("rm_chat_user") || null);
   const [showOnboard, setShowOnboard] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-
-  // Chat state
   const [roomId, setRoomId] = useState("general");
-  const [messages, setMessages] = useState(() => sGet("rm_chat_msgs") || DEMO_MESSAGES);
+  const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [input, setInput] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
   const [lightbox, setLightbox] = useState(null);
-  const [typingName, setTypingName] = useState("");
+  const [sending, setSending] = useState(false);
 
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
-  const fileRef = useRef(null);
 
   useEffect(() => { if (!user) setShowOnboard(true); }, [user]);
-  useEffect(() => { sSet("rm_chat_msgs", messages); }, [messages]);
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, roomId]);
 
-  // Simulate occasional typing indicator
+  // ── Load messages + subscribe to real-time ──
   useEffect(() => {
-    const names = ["DarkCityReader","EmberWolf","NightReader99","ShadowFan"];
-    const t = setInterval(() => {
-      if (Math.random() < 0.15) {
-        const n = names[Math.floor(Math.random() * names.length)];
-        setTypingName(n);
-        setTimeout(() => setTypingName(""), 2500);
-      }
-    }, 8000);
-    return () => clearInterval(t);
-  }, []);
+    setLoading(true);
+    // Fetch last 100 messages for current room
+    sb.from("messages")
+      .select("*")
+      .eq("room_id", roomId)
+      .order("created_at", { ascending: true })
+      .limit(100)
+      .then(({ data }) => {
+        setMessages(data ? data.map(rowToMsg) : []);
+        setLoading(false);
+      });
 
-  const roomMessages = messages.filter(m => m.roomId === roomId);
+    // Real-time subscription
+    const channel = sb
+      .channel(`room-${roomId}`)
+      .on("postgres_changes", {
+        event: "INSERT", schema: "public", table: "messages",
+        filter: `room_id=eq.${roomId}`,
+      }, (payload) => {
+        setMessages(prev => {
+          // Avoid duplicates
+          if (prev.find(m => m.id === payload.new.id)) return prev;
+          return [...prev, rowToMsg(payload.new)];
+        });
+      })
+      .on("postgres_changes", {
+        event: "UPDATE", schema: "public", table: "messages",
+        filter: `room_id=eq.${roomId}`,
+      }, (payload) => {
+        setMessages(prev => prev.map(m => m.id === payload.new.id ? rowToMsg(payload.new) : m));
+      })
+      .subscribe();
+
+    return () => { sb.removeChannel(channel); };
+  }, [roomId]);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   // Group messages by date
   const grouped = [];
   let lastDate = "";
-  roomMessages.forEach(m => {
+  messages.forEach(m => {
     const d = fmtDate(m.ts);
     if (d !== lastDate) { grouped.push({ type: "date", label: d, id: "date_" + m.id }); lastDate = d; }
     grouped.push({ type: "msg", msg: m });
   });
 
-  const sendMessage = (text, imgUrl) => {
-    if (!user) return;
+  const sendMessage = async (text, imgUrl) => {
+    if (!user || sending) return;
     if (!text.trim() && !imgUrl) return;
-    const msg = {
-      id: genId(), roomId, userId: user.id,
-      userName: user.name, userColor: user.color, userAvatar: user.avatar,
-      text: text.trim(), imgUrl: imgUrl || null, ts: Date.now(), reactions: {},
+    setSending(true);
+    const id = genId();
+    const row = {
+      id, room_id: roomId, user_id: user.id,
+      user_name: user.name, user_color: user.color, user_avatar: user.avatar,
+      text: text.trim(), img_url: imgUrl || "",
+      reactions: {}, created_at: new Date().toISOString(),
     };
-    setMessages(p => [...p, msg]);
     setInput("");
-    if (textareaRef.current) { textareaRef.current.style.height = "auto"; }
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
+    await sb.from("messages").insert(row);
+    setSending(false);
   };
 
   const handleKey = (e) => {
@@ -461,31 +508,40 @@ export default function Community() {
 
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0]; if (!file) return;
+    // Resize large images before storing to keep DB size reasonable
     const reader = new FileReader();
-    reader.onload = ev => sendMessage("", ev.target.result);
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 800;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width * scale; canvas.height = img.height * scale;
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        sendMessage("", canvas.toDataURL("image/jpeg", 0.75));
+      };
+      img.src = ev.target.result;
+    };
     reader.readAsDataURL(file);
     e.target.value = "";
   };
 
-  const addReaction = (msgId, emoji) => {
+  const addReaction = async (msgId, emoji) => {
     if (!user) return;
-    setMessages(prev => prev.map(m => {
-      if (m.id !== msgId) return m;
-      const r = { ...(m.reactions || {}) };
-      const existing = r[emoji] || { count: 0, users: [] };
-      const hasIt = existing.users.includes(user.id);
-      r[emoji] = hasIt
-        ? { count: existing.count - 1, users: existing.users.filter(u => u !== user.id) }
-        : { count: existing.count + 1, users: [...existing.users, user.id] };
-      if (r[emoji].count === 0) delete r[emoji];
-      return { ...m, reactions: r };
-    }));
+    const msg = messages.find(m => m.id === msgId); if (!msg) return;
+    const r = { ...(msg.reactions || {}) };
+    const existing = r[emoji] || { count: 0, users: [] };
+    const hasIt = existing.users.includes(user.id);
+    r[emoji] = hasIt
+      ? { count: existing.count - 1, users: existing.users.filter(u => u !== user.id) }
+      : { count: existing.count + 1, users: [...existing.users, user.id] };
+    if (r[emoji].count === 0) delete r[emoji];
+    // Optimistic update
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: r } : m));
+    await sb.from("messages").update({ reactions: r }).eq("id", msgId);
   };
 
-  const unreadCount = (rid) => {
-    if (rid === roomId) return 0;
-    return messages.filter(m => m.roomId === rid && m.userId !== user?.id).length % 3;
-  };
+  const unreadCount = (rid) => rid === roomId ? 0 : 0; // real-time handles this
 
   return (
     <>
@@ -511,7 +567,6 @@ export default function Community() {
                 onClick={() => setRoomId(r.id)}>
                 <span className="room-icon">{r.icon}</span>
                 <span className="room-label"># {r.label}</span>
-                {unreadCount(r.id) > 0 && <span className="room-unread">{unreadCount(r.id)}</span>}
               </button>
             ))}
           </div>
@@ -542,46 +597,33 @@ export default function Community() {
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.8rem" }}>
-              <button
-                onClick={() => goTo('/')}
-                style={{
-                  display: "flex", alignItems: "center", gap: "0.4rem",
-                  padding: "0.35rem 0.9rem", borderRadius: "4px",
-                  border: "1px solid var(--border2)", background: "rgba(255,255,255,0.03)",
-                  color: "var(--soft)", cursor: "pointer", transition: "all 0.2s",
-                  fontFamily: "'Rajdhani',sans-serif", fontSize: "0.75rem",
-                  fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase",
-                }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--cyan)"; e.currentTarget.style.color = "var(--cyan)"; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border2)"; e.currentTarget.style.color = "var(--soft)"; }}
-              >
+              <button onClick={() => goTo('/')}
+                style={{ display:"flex",alignItems:"center",gap:"0.4rem",padding:"0.35rem 0.9rem",borderRadius:"4px",border:"1px solid var(--border2)",background:"rgba(255,255,255,0.03)",color:"var(--soft)",cursor:"pointer",fontFamily:"'Rajdhani',sans-serif",fontSize:"0.75rem",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",transition:"all 0.2s" }}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--cyan)";e.currentTarget.style.color="var(--cyan)"}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--border2)";e.currentTarget.style.color="var(--soft)"}}>
                 ← Home
               </button>
-              <div className="online-pill">
-                <span className="online-dot" />
-                <span>{Math.floor(Math.random() * 8) + 3} Online</span>
-              </div>
+              <div className="online-pill"><span className="online-dot" /><span>Live</span></div>
             </div>
           </div>
 
           {/* Messages */}
           <div className="chat-messages">
-            {grouped.length === 0 && (
-              <div style={{ textAlign: "center", padding: "3rem 1rem" }}>
-                <div style={{ fontSize: "2.5rem", marginBottom: "0.8rem" }}>{ROOMS.find(r => r.id === roomId)?.icon}</div>
-                <p style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: "1.4rem", letterSpacing: "0.06em", color: "var(--text)", marginBottom: "0.4rem" }}>
-                  Start the conversation
-                </p>
-                <p style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "0.85rem", color: "var(--muted)" }}>
-                  Be the first to post in #{ROOMS.find(r => r.id === roomId)?.label}
-                </p>
+            {loading ? (
+              <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,flexDirection:"column",gap:"0.8rem" }}>
+                <div style={{ width:"40px",height:"40px",borderRadius:"50%",border:"2px solid var(--violet)",borderTopColor:"transparent",animation:"spin 0.8s linear infinite" }} />
+                <p style={{ fontFamily:"'Rajdhani',sans-serif",fontSize:"0.8rem",color:"var(--muted)" }}>Loading messages...</p>
+                <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
               </div>
-            )}
-            {grouped.map(item => {
+            ) : grouped.length === 0 ? (
+              <div style={{ textAlign:"center",padding:"3rem 1rem" }}>
+                <div style={{ fontSize:"2.5rem",marginBottom:"0.8rem" }}>{ROOMS.find(r=>r.id===roomId)?.icon}</div>
+                <p style={{ fontFamily:"'Bebas Neue',sans-serif",fontSize:"1.4rem",letterSpacing:"0.06em",color:"var(--text)",marginBottom:"0.4rem" }}>Start the conversation</p>
+                <p style={{ fontFamily:"'Rajdhani',sans-serif",fontSize:"0.85rem",color:"var(--muted)" }}>Be the first to post in #{ROOMS.find(r=>r.id===roomId)?.label}</p>
+              </div>
+            ) : grouped.map(item => {
               if (item.type === "date") return (
-                <div key={item.id} className="msg-date-divider">
-                  <span>{item.label}</span>
-                </div>
+                <div key={item.id} className="msg-date-divider"><span>{item.label}</span></div>
               );
               const m = item.msg;
               const isOwn = m.userId === user?.id;
@@ -596,33 +638,27 @@ export default function Community() {
                       <span className="msg-name" style={{ color: m.userColor }}>{m.userName}</span>
                       <span className="msg-time">{fmtTime(m.ts)}</span>
                     </div>
-                    {m.text && (
-                      emojiOnly
-                        ? <div className="msg-emoji">{m.text}</div>
-                        : <div className="msg-bubble">{m.text}</div>
+                    {m.text && (emojiOnly
+                      ? <div className="msg-emoji">{m.text}</div>
+                      : <div className="msg-bubble">{m.text}</div>
                     )}
                     {m.imgUrl && (
                       <div className="msg-img-wrap">
                         <img src={m.imgUrl} alt="shared" className="msg-img" onClick={() => setLightbox(m.imgUrl)} />
                       </div>
                     )}
-                    {/* Reactions */}
                     <div className="msg-reactions">
                       {Object.entries(m.reactions || {}).filter(([,v]) => v.count > 0).map(([emoji, v]) => (
-                        <button key={emoji} className={`reaction-btn ${v.users.includes(user?.id) ? "mine" : ""}`}
+                        <button key={emoji} className={`reaction-btn ${v.users?.includes(user?.id) ? "mine" : ""}`}
                           onClick={() => addReaction(m.id, emoji)}>
                           {emoji} {v.count}
                         </button>
                       ))}
-                      <div style={{ position: "relative", display: "inline-block" }}>
-                        <button className="reaction-btn" style={{ fontSize: "0.75rem" }}
-                          onClick={e => { e.stopPropagation(); }}>
-                          <span style={{ display: "flex", gap: "3px" }}>
-                            {QUICK_REACTIONS.slice(0, 4).map(em => (
-                              <span key={em} style={{ cursor: "pointer" }} onClick={() => addReaction(m.id, em)}>{em}</span>
-                            ))}
-                          </span>
-                        </button>
+                      <div style={{ display:"inline-flex",gap:"2px" }}>
+                        {QUICK_REACTIONS.slice(0,4).map(em => (
+                          <button key={em} className="reaction-btn" style={{ fontSize:"0.8rem",padding:"0.1rem 0.3rem" }}
+                            onClick={() => addReaction(m.id, em)}>{em}</button>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -632,58 +668,37 @@ export default function Community() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Typing */}
-          <div className="typing-bar">
-            {typingName && (
-              <div className="typing-indicator">
-                <div className="typing-dots"><span /><span /><span /></div>
-                <span>{typingName} is typing...</span>
-              </div>
-            )}
-          </div>
+          {/* Typing bar (kept for spacing) */}
+          <div className="typing-bar" />
 
           {/* Input */}
           <div className="chat-input-area">
             <div className="chat-input-box">
-              {/* Image upload */}
               <button className="input-btn img-upload-btn" title="Send image">
                 📎
                 <input type="file" accept="image/*" onChange={handleImageUpload} />
               </button>
-
-              <textarea
-                ref={textareaRef}
-                className="chat-textarea"
-                value={input}
-                onChange={e => {
-                  setInput(e.target.value);
-                  e.target.style.height = "auto";
-                  e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
-                }}
+              <textarea ref={textareaRef} className="chat-textarea" value={input}
+                onChange={e => { setInput(e.target.value); e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,120)+"px"; }}
                 onKeyDown={handleKey}
-                placeholder={user ? `Message #${ROOMS.find(r => r.id === roomId)?.label}...` : "Join to start chatting..."}
-                disabled={!user}
-                rows={1}
-              />
-
-              {/* Emoji */}
+                placeholder={user ? `Message #${ROOMS.find(r=>r.id===roomId)?.label}...` : "Join to start chatting..."}
+                disabled={!user || sending} rows={1} />
               <div className="input-relative">
-                <button className="input-btn" onClick={() => setShowEmoji(p => !p)} title="Emoji">😊</button>
+                <button className="input-btn" onClick={() => setShowEmoji(p => !p)}>😊</button>
                 {showEmoji && (
                   <div className="emoji-picker" onClick={e => e.stopPropagation()}>
                     {EMOJI_LIST.map(em => (
-                      <button key={em} className="emoji-opt" onClick={() => { setInput(p => p + em); setShowEmoji(false); textareaRef.current?.focus(); }}>
+                      <button key={em} className="emoji-opt"
+                        onClick={() => { setInput(p => p + em); setShowEmoji(false); textareaRef.current?.focus(); }}>
                         {em}
                       </button>
                     ))}
                   </div>
                 )}
               </div>
-
-              {/* Send */}
               <button className="input-btn input-send" onClick={() => sendMessage(input)}
-                disabled={!input.trim() || !user} title="Send">
-                ➤
+                disabled={!input.trim() || !user || sending}>
+                {sending ? "…" : "➤"}
               </button>
             </div>
             <p className="input-hint">Enter to send · Shift+Enter for new line · 📎 to share images</p>
@@ -691,7 +706,7 @@ export default function Community() {
         </div>
       </div>
 
-      {/* ── LIGHTBOX ── */}
+      {/* Lightbox */}
       {lightbox && (
         <div className="lightbox" onClick={() => setLightbox(null)}>
           <button className="lightbox-x" onClick={() => setLightbox(null)}>✕</button>
@@ -699,24 +714,22 @@ export default function Community() {
         </div>
       )}
 
-      {/* ── ONBOARDING ── */}
-      {showOnboard && <Onboard onDone={u => { setUser(u); sSet("rm_chat_user", u); setShowOnboard(false); }} />}
+      {/* Onboarding */}
+      {showOnboard && (
+        <Onboard onDone={u => { setUser(u); lSet("rm_chat_user", u); setShowOnboard(false); }} />
+      )}
 
-      {/* ── PROFILE EDIT ── */}
+      {/* Profile edit */}
       {showProfile && user && (
         <div className="profile-overlay" onClick={() => setShowProfile(false)}>
           <div onClick={e => e.stopPropagation()}>
-            <Onboard
-              initial={user}
-              onDone={u => { setUser(u); sSet("rm_chat_user", u); setShowProfile(false); }}
-              isEdit
-            />
+            <Onboard initial={user} isEdit
+              onDone={u => { setUser(u); lSet("rm_chat_user", u); setShowProfile(false); }} />
           </div>
         </div>
       )}
 
-      {/* Close emoji picker on outside click */}
-      {showEmoji && <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setShowEmoji(false)} />}
+      {showEmoji && <div style={{ position:"fixed",inset:0,zIndex:40 }} onClick={() => setShowEmoji(false)} />}
     </>
   );
 }
