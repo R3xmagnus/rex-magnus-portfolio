@@ -752,13 +752,18 @@ export default function App() {
     );
   };
 
+  const [loginLoading, setLoginLoading] = useState(false);
+
   const handleLogin = async () => {
+    if (loginLoading) return;
+    setLoginLoading(true);
     const pwd = await getAdminPassword();
     if (passInput.trim() === pwd) {
       setAdminState("dash"); setPassErr(""); setPassInput("");
     } else {
       setPassErr("Incorrect password. Please try again.");
     }
+    setLoginLoading(false);
   };
 
   const scrollTo = (id) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
@@ -766,7 +771,7 @@ export default function App() {
   const totalClicks = Object.values(clicks).reduce((a, b) => a + b, 0);
   const sortedBooks = [...books].sort((a, b) => (clicks[b.id] || 0) - (clicks[a.id] || 0));
   const maxClicks = Math.max(...books.map(b => clicks[b.id] || 0), 1);
-  const topBook = sortedBooks[0];
+  const topBook = sortedBooks.find(b => (clicks[b.id] || 0) > 0) || null;
 
   const saveBook = async (data) => {
     if (editingBook === "new") {
@@ -1037,7 +1042,9 @@ export default function App() {
                 onKeyDown={e => e.key === "Enter" && handleLogin()} placeholder="Enter password..." autoFocus />
               {passErr && <p className="login-err">⚠ {passErr}</p>}
             </div>
-            <button className="btn-login" onClick={handleLogin}>Access Dashboard</button>
+            <button className="btn-login" onClick={handleLogin} disabled={loginLoading}>
+              {loginLoading ? "Checking..." : "Access Dashboard"}
+            </button>
             <button className="btn-cancel" onClick={() => { setAdminState(null); setPassInput(""); setPassErr(""); }}>Cancel</button>
           </div>
         </div>
@@ -1066,13 +1073,13 @@ export default function App() {
               <div className="scard">
                 <div className="scard-ico">🔥</div>
                 <span className="scard-n" style={{ fontSize: "0.95rem", paddingTop: "0.3rem" }}>
-                  {topBook && (clicks[topBook.id] || 0) > 0 ? topBook.title.split(" ").slice(0, 3).join(" ") : "None yet"}
+                  {topBook ? topBook.title.split(" ").slice(0, 3).join(" ") : "None yet"}
                 </span>
                 <span className="scard-l">Most Clicked</span>
               </div>
             </div>
             <div className="tabs">
-              {[["analytics","📈 Analytics"],["books","📚 Manage Books"],["author","✍ Author Info"],["security","🔑 Security"]].map(([k,l]) => (
+              {[["analytics","📈 Analytics"],["books","📚 Manage Books"],["author","✍ Author Info"],["community","💬 Community"],["security","🔑 Security"]].map(([k,l]) => (
                 <button key={k} className={`tab ${adminTab === k ? "on" : ""}`} onClick={() => setAdminTab(k)}>{l}</button>
               ))}
             </div>
@@ -1128,6 +1135,7 @@ export default function App() {
                 <AuthorForm author={author} onSave={saveAuthor} />
               </div>
             )}
+            {adminTab === "community" && <CommunityAdmin sb={sb} />}
             {adminTab === "security" && (
               <PasswordForm onPasswordChanged={() => setAdminTab("analytics")} />
             )}
@@ -1143,8 +1151,194 @@ export default function App() {
 }
 
 /* ─────────────────────────────────────────────
-   BOOK FORM (with image upload)
+   COMMUNITY ADMIN — Channel & User Management
 ───────────────────────────────────────────── */
+const CHANNEL_ICONS = ["💬","🗡️","🔥","🚪","🔮","📖","⚔️","🌑","🐺","👁️","🔞","💀","⚡","🌊","🎭","🎯","🏆","🎪"];
+
+function CommunityAdmin({ sb }) {
+  const [channels, setChannels] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [tab, setTab] = useState("channels");
+  const [editing, setEditing] = useState(null); // null | "new" | channel obj
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ id:"", label:"", icon:"💬", description:"", is_adult:false });
+  const sf = (k,v) => setForm(p => ({...p,[k]:v}));
+
+  useEffect(() => {
+    // Load channels
+    sb.from("channels").select("*").order("sort_order")
+      .then(({data}) => setChannels(data || []));
+    // Load moderation records (all users who have been flagged at least once)
+    sb.from("moderation").select("*").order("updated_at", {ascending:false})
+      .then(({data}) => setUsers(data || []));
+  }, []);
+
+  const openNew = () => {
+    setForm({ id:"", label:"", icon:"💬", description:"", is_adult:false });
+    setEditing("new");
+  };
+  const openEdit = (ch) => {
+    setForm({ id:ch.id, label:ch.label, icon:ch.icon, description:ch.description, is_adult:ch.is_adult });
+    setEditing(ch);
+  };
+
+  const saveChannel = async () => {
+    if (!form.label.trim()) return;
+    setSaving(true);
+    if (editing === "new") {
+      const id = form.label.toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,20) + Date.now().toString(36).slice(-4);
+      const row = { id, label:form.label.trim(), icon:form.icon, description:form.description.trim(), is_adult:form.is_adult, sort_order: channels.length+1 };
+      const {error} = await sb.from("channels").insert(row);
+      if (!error) setChannels(p => [...p, row]);
+    } else {
+      const row = { label:form.label.trim(), icon:form.icon, description:form.description.trim(), is_adult:form.is_adult };
+      const {error} = await sb.from("channels").update(row).eq("id", form.id);
+      if (!error) setChannels(p => p.map(c => c.id === form.id ? {...c,...row} : c));
+    }
+    setSaving(false); setEditing(null);
+  };
+
+  const deleteChannel = async (id) => {
+    if (!window.confirm("Delete this channel? All messages in it will remain in the database but the channel will disappear.")) return;
+    await sb.from("channels").delete().eq("id", id);
+    setChannels(p => p.filter(c => c.id !== id));
+  };
+
+  const moderateUser = async (userId, userName, action) => {
+    const existing = users.find(u => u.user_id === userId);
+    let newStatus = action;
+    const row = { user_id:userId, user_name:userName, status:newStatus, warnings: existing?.warnings||0, reason:action, updated_at:new Date().toISOString() };
+    await sb.from("moderation").upsert(row, {onConflict:"user_id"});
+    setUsers(p => {
+      const exists = p.find(u => u.user_id===userId);
+      if (exists) return p.map(u => u.user_id===userId ? {...u,...row} : u);
+      return [...p, row];
+    });
+  };
+
+  const unmoderateUser = async (userId) => {
+    await sb.from("moderation").update({status:"ok", warnings:0, reason:"", updated_at:new Date().toISOString()}).eq("user_id", userId);
+    setUsers(p => p.map(u => u.user_id===userId ? {...u,status:"ok",warnings:0} : u));
+  };
+
+  const statusColor = (s) => s==="banned"?"var(--magenta)":s==="muted"?"var(--gold)":s.startsWith("warn")?"#f97316":"#22c55e";
+  const statusLabel = (s) => ({ok:"OK",warned1:"Warning 1",warned2:"Warning 2",muted:"Muted",banned:"Banned"})[s]||s;
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+      <div className="tabs" style={{marginBottom:0}}>
+        {[["channels","📋 Channels"],["users","👥 Users"]].map(([k,l])=>(
+          <button key={k} className={`tab ${tab===k?"on":""}`} onClick={()=>setTab(k)}>{l}</button>
+        ))}
+      </div>
+
+      {/* CHANNELS */}
+      {tab==="channels" && (
+        <div className="acard">
+          <div className="acard-head" style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:"0.8rem"}}>
+            <div><h3>Community Channels</h3><p>Create, edit, delete channels. Toggle 18+ to exempt from content rules.</p></div>
+            <button className="da da-outline" onClick={openNew}>+ New Channel</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:"0.6rem",marginTop:"1rem"}}>
+            {channels.map(ch=>(
+              <div key={ch.id} style={{display:"flex",alignItems:"center",gap:"0.8rem",padding:"0.8rem 1rem",background:"rgba(255,255,255,0.02)",border:"1px solid var(--border)",borderRadius:"6px"}}>
+                <span style={{fontSize:"1.3rem",width:30,textAlign:"center"}}>{ch.icon}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"0.5rem",flexWrap:"wrap"}}>
+                    <span style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:"0.9rem"}}># {ch.label}</span>
+                    {ch.is_adult && <span style={{fontSize:"0.6rem",fontWeight:700,padding:"0.1rem 0.4rem",borderRadius:"3px",background:"rgba(255,45,122,0.15)",border:"1px solid rgba(255,45,122,0.3)",color:"var(--magenta)",letterSpacing:"0.1em"}}>18+</span>}
+                  </div>
+                  <p style={{fontFamily:"'Rajdhani',sans-serif",fontSize:"0.72rem",color:"var(--muted)",marginTop:"0.1rem"}}>{ch.description||"No description"}</p>
+                </div>
+                <div style={{display:"flex",gap:"0.4rem",flexShrink:0}}>
+                  <button className="medit" onClick={()=>openEdit(ch)}>Edit</button>
+                  <button className="mdel" onClick={()=>deleteChannel(ch.id)} title="Delete channel">🗑</button>
+                </div>
+              </div>
+            ))}
+            {channels.length===0 && <p style={{fontFamily:"'Rajdhani',sans-serif",color:"var(--muted)",textAlign:"center",padding:"2rem"}}>No channels yet. Create one above.</p>}
+          </div>
+        </div>
+      )}
+
+      {/* USERS */}
+      {tab==="users" && (
+        <div className="acard">
+          <div className="acard-head"><h3>User Moderation</h3><p>Mute, remove, or ban users from the community. Banned users cannot send messages.</p></div>
+          {users.length===0 ? (
+            <p style={{fontFamily:"'Rajdhani',sans-serif",color:"var(--muted)",textAlign:"center",padding:"2rem"}}>No flagged users yet. Users who receive warnings will appear here.</p>
+          ) : (
+            <table style={{marginTop:"1rem"}}>
+              <thead><tr><th>User</th><th>Status</th><th>Warnings</th><th>Reason</th><th>Actions</th></tr></thead>
+              <tbody>
+                {users.map(u=>(
+                  <tr key={u.user_id}>
+                    <td style={{fontWeight:600}}>{u.user_name}</td>
+                    <td><span style={{color:statusColor(u.status),fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:"0.8rem"}}>{statusLabel(u.status)}</span></td>
+                    <td style={{color:"var(--gold)",fontWeight:700}}>{u.warnings}</td>
+                    <td style={{color:"var(--muted)",fontSize:"0.8rem"}}>{u.reason||"—"}</td>
+                    <td>
+                      <div style={{display:"flex",gap:"0.4rem",flexWrap:"wrap"}}>
+                        {u.status!=="muted" && <button className="medit" style={{fontSize:"0.7rem",padding:"0.2rem 0.5rem"}} onClick={()=>moderateUser(u.user_id,u.user_name,"muted")}>Mute</button>}
+                        {u.status!=="banned" && <button className="mdel" style={{fontSize:"0.7rem",padding:"0.2rem 0.5rem"}} onClick={()=>moderateUser(u.user_id,u.user_name,"banned")}>Ban</button>}
+                        {u.status!=="ok" && <button className="medit" style={{fontSize:"0.7rem",padding:"0.2rem 0.5rem",borderColor:"rgba(34,197,94,0.3)",color:"#22c55e"}} onClick={()=>unmoderateUser(u.user_id)}>Lift</button>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* CHANNEL FORM MODAL */}
+      {editing && (
+        <div className="bform-bg">
+          <div className="bform-box">
+            <h3>{editing==="new"?"New Channel":"Edit Channel"}</h3>
+            <div className="ff">
+              <label>Channel Name</label>
+              <input value={form.label} onChange={e=>sf("label",e.target.value)} placeholder="e.g. Dark Corners..." autoFocus />
+            </div>
+            <div className="ff">
+              <label>Description</label>
+              <input value={form.description} onChange={e=>sf("description",e.target.value)} placeholder="What's this channel for?" />
+            </div>
+            <div className="ff">
+              <label>Icon</label>
+              <div style={{display:"flex",flexWrap:"wrap",gap:"0.4rem",marginBottom:"0.5rem"}}>
+                {CHANNEL_ICONS.map(ic=>(
+                  <button key={ic} onClick={()=>sf("icon",ic)}
+                    style={{fontSize:"1.2rem",padding:"0.3rem",borderRadius:"5px",border:`2px solid ${form.icon===ic?"var(--cyan)":"transparent"}`,background:form.icon===ic?"rgba(0,212,255,0.1)":"rgba(255,255,255,0.03)",cursor:"pointer"}}>
+                    {ic}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="ff">
+              <label style={{display:"flex",alignItems:"center",gap:"0.7rem",cursor:"pointer"}}>
+                <input type="checkbox" checked={form.is_adult} onChange={e=>sf("is_adult",e.target.checked)}
+                  style={{width:16,height:16,accentColor:"var(--magenta)"}} />
+                <span>🔞 Mark as 18+ channel</span>
+                <span style={{fontFamily:"'Rajdhani',sans-serif",fontSize:"0.72rem",color:"var(--muted)",fontWeight:400}}>— Exempts from profanity rules</span>
+              </label>
+            </div>
+            {form.is_adult && (
+              <div style={{padding:"0.7rem 1rem",background:"rgba(255,45,122,0.06)",border:"1px solid rgba(255,45,122,0.2)",borderRadius:"4px",marginBottom:"0.8rem"}}>
+                <p style={{fontFamily:"'Rajdhani',sans-serif",fontSize:"0.78rem",color:"var(--magenta)",letterSpacing:"0.04em"}}>⚠ 18+ channels are exempt from profanity filtering and auto-bans. Use responsibly.</p>
+              </div>
+            )}
+            <div className="facts">
+              <button className="fsave" onClick={saveChannel} disabled={saving}>{saving?"Saving...":"Save Channel"}</button>
+              <button className="fcancel" onClick={()=>setEditing(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 function BookForm({ book, onSave, onCancel }) {
   const [f, setF] = useState(book || { title: "", genre: "Urban Fantasy", synopsis: "", coverUrl: "", links: [{ label: "", url: "" }] });
   const [imgTab, setImgTab] = useState("url");
@@ -1291,6 +1485,9 @@ function AuthorForm({ author, onSave }) {
   const [photoTab, setPhotoTab] = useState("url");
   const [saved, setSaved] = useState(false);
   const s = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  // Sync if parent author data reloads
+  useEffect(() => { setF(author); }, [author]);
 
   const handlePhotoFile = (e) => {
     const file = e.target.files?.[0];
