@@ -1,68 +1,52 @@
 import { useState, useEffect, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
 
 // ══════════════════════════════════════════════
-//  ✏️  DEFAULT ADMIN PASSWORD (first-time only)
-//  Once changed in the dashboard, the new
-//  password is saved and this line is ignored.
+//  SUPABASE CLIENT
+// ══════════════════════════════════════════════
+const SUPABASE_URL = "https://aanksddaitghblfrarvj.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhbmtzZGRhaXRnaGJsZnJhcnZqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2MjE2MDgsImV4cCI6MjA4NzE5NzYwOH0.9U7TdjAd-r4nVhI9VEAa77DBA6Kp5eEsit9FPOZM1N8";
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ══════════════════════════════════════════════
+//  DEFAULT ADMIN PASSWORD
 const DEFAULT_ADMIN_PASSWORD = "admin123";
 // ══════════════════════════════════════════════
 
-/* ─────────────────────────────────────────────
-   STORAGE  (localStorage for production)
-───────────────────────────────────────────── */
-const sGet = (k) => {
-  try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; }
-  catch { return null; }
-};
-const sSet = (k, v) => {
-  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
-};
-
-// Navigation helper — always works because window.__navigate is set at module level in main.jsx
+// Navigation helper
 const goTo = (path) => {
-  if (typeof window.__navigate === 'function') {
-    window.__navigate(path);
-  } else {
-    window.location.href = path; // fallback
-  }
+  if (typeof window.__navigate === "function") window.__navigate(path);
+  else window.location.href = path;
 };
 
-// Always read the live password from storage (falls back to default)
-const getAdminPassword = () => sGet("rm_password") || DEFAULT_ADMIN_PASSWORD;
+// Get admin password from Supabase settings table
+const getAdminPassword = async () => {
+  const { data } = await sb.from("settings").select("value").eq("key", "admin_password").single();
+  return data?.value || DEFAULT_ADMIN_PASSWORD;
+};
 
 /* ─────────────────────────────────────────────
-   DEFAULT DATA
+   DEFAULT DATA (used as fallback only)
 ───────────────────────────────────────────── */
 const DEFAULT_BOOKS = [
-  {
-    id: "b1", title: "Iron & Shadow", genre: "Urban Fantasy",
+  { id: "b1", title: "Iron & Shadow", genre: "Urban Fantasy",
     synopsis: "Malik Kane has one rule: never get involved. But when a ritual murder leaves a supernatural calling card across Chicago's South Side, the ex-soldier turned bounty-hunter is pulled back into a world of shadow courts and ancient debts — whether he wants it or not. The city has teeth. Something old just woke up hungry.",
-    coverUrl: "", links: [{ label: "Amazon", url: "#" }, { label: "Goodreads", url: "#" }],
-  },
-  {
-    id: "b2", title: "Born of Embers", genre: "Dark Fantasy",
+    coverUrl: "", links: [{ label: "Amazon", url: "#" }, { label: "Goodreads", url: "#" }] },
+  { id: "b2", title: "Born of Embers", genre: "Dark Fantasy",
     synopsis: "They told Darius Vael he was broken — a fire-touched outcast who couldn't control the storm inside him. Three years after burning down everything he loved, he returns to Harrow City ruled by the same creatures who made him. Revenge would be simple. Survival is something else entirely.",
-    coverUrl: "", links: [{ label: "Amazon", url: "#" }, { label: "Apple Books", url: "#" }],
-  },
-  {
-    id: "b3", title: "The Last Threshold", genre: "Paranormal Fantasy",
+    coverUrl: "", links: [{ label: "Amazon", url: "#" }, { label: "Apple Books", url: "#" }] },
+  { id: "b3", title: "The Last Threshold", genre: "Paranormal Fantasy",
     synopsis: "Between the seen and unseen world stands one door, and Jonah Cross is its keeper. He didn't ask for the job — it was bled into him. Now the door is cracking, something on the other side wants through, and the only people who can help him are the ones he swore he'd never trust again.",
-    coverUrl: "", links: [{ label: "Amazon", url: "#" }, { label: "Barnes & Noble", url: "#" }],
-  },
+    coverUrl: "", links: [{ label: "Amazon", url: "#" }, { label: "Barnes & Noble", url: "#" }] },
 ];
 
 const DEFAULT_AUTHOR = {
-  name: "Rex Magnus",
-  tagline: "Exclusive Author at Newreading & Meganovel",
-  bio1: "Write your first bio paragraph here — who you are, what drives your stories, and what makes your male-lead urban fantasy world unique.",
-  bio2: "A second paragraph for background, awards, what you're working on next, or anything that shows the human behind the pen.",
-  photoUrl: "",
-  email: "hello@rexmagnus.com",
+  name: "Rex Magnus", tagline: "Exclusive Author at Newreading & Meganovel",
+  bio1: "Write your first bio paragraph here.", bio2: "A second paragraph here.",
+  photoUrl: "", email: "hello@rexmagnus.com",
   socials: [
-    { label: "Twitter / X",  url: "" },
-    { label: "Instagram",    url: "" },
-    { label: "Goodreads",    url: "" },
-    { label: "Newsletter",   url: "" },
+    { label: "Twitter / X", url: "" }, { label: "Instagram", url: "" },
+    { label: "Goodreads",   url: "" }, { label: "Newsletter", url: "" },
   ],
 };
 
@@ -708,10 +692,11 @@ function Particles() {
    MAIN APP
 ───────────────────────────────────────────── */
 export default function App() {
-  const [books, setBooks] = useState(() => sGet("rm_books") || DEFAULT_BOOKS);
-  const [author, setAuthor] = useState(() => sGet("rm_author") || DEFAULT_AUTHOR);
+  const [books, setBooks] = useState(DEFAULT_BOOKS);
+  const [author, setAuthor] = useState(DEFAULT_AUTHOR);
   const [visitors, setVisitors] = useState(0);
-  const [clicks, setClicks] = useState(() => sGet("rm_clicks") || {});
+  const [clicks, setClicks] = useState({});
+  const [loading, setLoading] = useState(true);
   const [selectedBook, setSelectedBook] = useState(null);
   const [adminState, setAdminState] = useState(null);
   const [adminTab, setAdminTab] = useState("analytics");
@@ -719,23 +704,57 @@ export default function App() {
   const [passErr, setPassErr] = useState("");
   const [editingBook, setEditingBook] = useState(null);
 
+  // ── Load all data from Supabase ──
   useEffect(() => {
-    const v = (sGet("rm_visitors") || 0) + 1;
-    setVisitors(v); sSet("rm_visitors", v);
+    (async () => {
+      try {
+        // Books
+        const { data: bData } = await sb.from("books").select("*").order("sort_order");
+        if (bData?.length) {
+          setBooks(bData.map(b => ({
+            id: b.id, title: b.title, genre: b.genre, synopsis: b.synopsis,
+            coverUrl: b.cover_url, links: b.links || [],
+          })));
+        }
+        // Author
+        const { data: aData } = await sb.from("author").select("*").eq("id", "main").single();
+        if (aData) {
+          setAuthor({ name: aData.name, tagline: aData.tagline, bio1: aData.bio1,
+            bio2: aData.bio2, photoUrl: aData.photo_url, email: aData.email,
+            socials: aData.socials || [] });
+        }
+        // Clicks
+        const { data: cData } = await sb.from("clicks").select("*");
+        if (cData) {
+          const cm = {}; cData.forEach(c => { cm[c.book_id] = c.count; });
+          setClicks(cm);
+        }
+        // Visitors — increment
+        const { data: vData } = await sb.from("settings").select("value").eq("key", "visitors").single();
+        const v = parseInt(vData?.value || "0") + 1;
+        setVisitors(v);
+        await sb.from("settings").upsert(
+          { key: "visitors", value: String(v), updated_at: new Date().toISOString() },
+          { onConflict: "key" }
+        );
+      } catch (e) { console.error("Load error", e); }
+      setLoading(false);
+    })();
   }, []);
 
-  useEffect(() => { sSet("rm_books", books); }, [books]);
-  useEffect(() => { sSet("rm_author", author); }, [author]);
-  useEffect(() => { sSet("rm_clicks", clicks); }, [clicks]);
-
-  const openBook = (book) => {
+  const openBook = async (book) => {
     setSelectedBook(book);
-    const updated = { ...clicks, [book.id]: (clicks[book.id] || 0) + 1 };
-    setClicks(updated);
+    const newCount = (clicks[book.id] || 0) + 1;
+    setClicks(p => ({ ...p, [book.id]: newCount }));
+    await sb.from("clicks").upsert(
+      { book_id: book.id, count: newCount, updated_at: new Date().toISOString() },
+      { onConflict: "book_id" }
+    );
   };
 
-  const handleLogin = () => {
-    if (passInput.trim() === getAdminPassword()) {
+  const handleLogin = async () => {
+    const pwd = await getAdminPassword();
+    if (passInput.trim() === pwd) {
       setAdminState("dash"); setPassErr(""); setPassInput("");
     } else {
       setPassErr("Incorrect password. Please try again.");
@@ -749,12 +768,56 @@ export default function App() {
   const maxClicks = Math.max(...books.map(b => clicks[b.id] || 0), 1);
   const topBook = sortedBooks[0];
 
-  const saveBook = (data) => {
-    if (editingBook === "new") setBooks(p => [...p, { ...data, id: "b" + Date.now() }]);
-    else setBooks(p => p.map(b => b.id === data.id ? data : b));
+  const saveBook = async (data) => {
+    if (editingBook === "new") {
+      const newId = "b" + Date.now();
+      const row = {
+        id: newId, title: data.title, genre: data.genre, synopsis: data.synopsis,
+        cover_url: data.coverUrl || "", links: data.links || [],
+        sort_order: books.length + 1,
+      };
+      const { error } = await sb.from("books").insert(row);
+      if (!error) setBooks(p => [...p, { ...data, id: newId }]);
+    } else {
+      const row = {
+        title: data.title, genre: data.genre, synopsis: data.synopsis,
+        cover_url: data.coverUrl || "", links: data.links || [],
+      };
+      const { error } = await sb.from("books").update(row).eq("id", data.id);
+      if (!error) setBooks(p => p.map(b => b.id === data.id ? data : b));
+    }
     setEditingBook(null);
   };
-  const delBook = (id) => { if (window.confirm("Remove this book?")) setBooks(p => p.filter(b => b.id !== id)); };
+
+  const delBook = async (id) => {
+    if (window.confirm("Remove this book from your portfolio?")) {
+      await sb.from("books").delete().eq("id", id);
+      setBooks(p => p.filter(b => b.id !== id));
+    }
+  };
+
+  const saveAuthor = async (data) => {
+    await sb.from("author").upsert({
+      id: "main", name: data.name, tagline: data.tagline, bio1: data.bio1,
+      bio2: data.bio2, photo_url: data.photoUrl, email: data.email,
+      socials: data.socials, updated_at: new Date().toISOString(),
+    });
+    setAuthor(data);
+  };
+
+  if (loading) return (
+    <>
+      <style>{CSS}</style>
+      <Particles />
+      <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1rem", zIndex: 10 }}>
+        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: "2rem", letterSpacing: "0.08em", background: "linear-gradient(135deg,#00d4ff,#7b2fff)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Rex Magnus</div>
+        <div style={{ width: "120px", height: "2px", background: "rgba(255,255,255,0.06)", borderRadius: "1px", overflow: "hidden" }}>
+          <div style={{ height: "100%", background: "linear-gradient(90deg,#7b2fff,#00d4ff)", borderRadius: "1px", animation: "loadBar 1.2s ease infinite" }} />
+        </div>
+      </div>
+      <style>{`@keyframes loadBar{0%{width:0;margin-left:0}50%{width:100%;margin-left:0}100%{width:0;margin-left:100%}}`}</style>
+    </>
+  );
 
   return (
     <>
@@ -1062,7 +1125,7 @@ export default function App() {
             {adminTab === "author" && (
               <div className="author-card">
                 <h3>Edit Author Information</h3>
-                <AuthorForm author={author} onSave={setAuthor} />
+                <AuthorForm author={author} onSave={saveAuthor} />
               </div>
             )}
             {adminTab === "security" && (
@@ -1163,12 +1226,16 @@ function PasswordForm({ onPasswordChanged }) {
   const matches = next && confirm && next === confirm;
   const doesntMatch = next && confirm && next !== confirm;
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setErr("");
-    if (current !== getAdminPassword()) { setErr("Current password is incorrect."); return; }
+    const pwd = await getAdminPassword();
+    if (current !== pwd) { setErr("Current password is incorrect."); return; }
     if (next.length < 6) { setErr("New password must be at least 6 characters."); return; }
     if (next !== confirm) { setErr("Passwords do not match."); return; }
-    sSet("rm_password", next);
+    await sb.from("settings").upsert(
+      { key: "admin_password", value: next, updated_at: new Date().toISOString() },
+      { onConflict: "key" }
+    );
     setSuccess(true);
     setCurrent(""); setNext(""); setConfirm("");
     setTimeout(() => { setSuccess(false); onPasswordChanged(); }, 2500);
