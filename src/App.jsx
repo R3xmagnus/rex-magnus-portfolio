@@ -18,6 +18,15 @@ const sSet = (k, v) => {
   try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
 };
 
+// Navigation helper — always works because window.__navigate is set at module level in main.jsx
+const goTo = (path) => {
+  if (typeof window.__navigate === 'function') {
+    window.__navigate(path);
+  } else {
+    window.location.href = path; // fallback
+  }
+};
+
 // Always read the live password from storage (falls back to default)
 const getAdminPassword = () => sGet("rm_password") || DEFAULT_ADMIN_PASSWORD;
 
@@ -49,6 +58,12 @@ const DEFAULT_AUTHOR = {
   bio2: "A second paragraph for background, awards, what you're working on next, or anything that shows the human behind the pen.",
   photoUrl: "",
   email: "hello@rexmagnus.com",
+  socials: [
+    { label: "Twitter / X",  url: "" },
+    { label: "Instagram",    url: "" },
+    { label: "Goodreads",    url: "" },
+    { label: "Newsletter",   url: "" },
+  ],
 };
 
 /* ─────────────────────────────────────────────
@@ -538,7 +553,7 @@ tr:hover td{background:rgba(255,255,255,0.02)}
 .add-card{background:transparent;border:1px dashed rgba(123,47,255,0.25);border-radius:8px;min-height:155px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0.6rem;cursor:pointer;transition:all 0.25s;color:var(--muted);font-family:'Rajdhani',sans-serif;font-size:0.82rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase}
 .add-card:hover{border-color:var(--violet);color:var(--violet);background:rgba(123,47,255,0.04)}
 .add-icon{width:38px;height:38px;border-radius:50%;border:1px dashed currentColor;display:flex;align-items:center;justify-content:center;font-size:1.2rem}
-.author-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:2rem;max-width:680px}
+.author-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:2rem;max-width:780px}
 .author-card h3{font-family:'Bebas Neue',sans-serif;font-size:1.2rem;letter-spacing:0.06em;color:var(--text);margin-bottom:1.8rem}
 .fr2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
 
@@ -572,6 +587,15 @@ tr:hover td{background:rgba(255,255,255,0.02)}
 .fcancel:hover{border-color:var(--text);color:var(--text)}
 .btn-primary-dash{display:inline-flex;align-items:center;gap:0.5rem;padding:0.75rem 1.8rem;border:none;border-radius:4px;background:linear-gradient(135deg,var(--violet),var(--cyan2));color:#fff;font-family:'Rajdhani',sans-serif;font-size:0.82rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;box-shadow:0 4px 20px rgba(123,47,255,0.4);transition:all 0.25s;margin-top:0.5rem}
 .btn-primary-dash:hover{box-shadow:0 6px 30px rgba(123,47,255,0.6);transform:translateY(-1px)}
+
+/* Socials editor */
+.socials-editor{display:flex;flex-direction:column;gap:0.5rem}
+.social-row{display:grid;grid-template-columns:32px 130px 1fr 30px;gap:0.4rem;align-items:center}
+.social-row-icon{font-size:1rem;text-align:center;opacity:0.6}
+.social-row-label{padding:0.55rem 0.65rem;font-size:0.82rem}
+.social-row-url{padding:0.55rem 0.65rem;font-size:0.82rem}
+.social-row-del{padding:0;background:none;border:1px solid rgba(255,45,122,0.25);border-radius:4px;color:var(--magenta);cursor:pointer;font-size:0.8rem;height:100%;transition:all 0.2s;display:flex;align-items:center;justify-content:center}
+.social-row-del:hover{background:rgba(255,45,122,0.08)}
 
 /* Author photo editor */
 .author-photo-editor{display:grid;grid-template-columns:160px 1fr;gap:1.5rem;align-items:start;margin-top:0.2rem}
@@ -744,6 +768,10 @@ export default function App() {
           {[["Books","books"],["About","about"],["Contact","contact"]].map(([lbl,id]) => (
             <a key={id} href={`#${id}`} onClick={e => { e.preventDefault(); scrollTo(id); }}>{lbl}</a>
           ))}
+          <a href="/community" onClick={e => { e.preventDefault(); goTo('/community'); }}
+            style={{ color: "var(--cyan)", borderBottom: "1px solid rgba(0,212,255,0.3)", paddingBottom: "2px" }}>
+            Community ✦
+          </a>
           <button className="nav-admin" onClick={() => { setAdminState("login"); setPassErr(""); setPassInput(""); }}>⚙ Admin</button>
         </div>
       </nav>
@@ -848,8 +876,12 @@ export default function App() {
             <p className="about-text-p">{author.bio1}</p>
             <p className="about-text-p">{author.bio2}</p>
             <div className="about-socials">
-              {["Twitter / X","Instagram","Goodreads","Newsletter"].map(s => (
-                <a key={s} href="#" className="social-btn">{s}</a>
+              {(author.socials || []).filter(s => s.label).map((s, i) => (
+                <a key={i} href={s.url || "#"} target={s.url ? "_blank" : undefined}
+                  rel="noopener noreferrer" className="social-btn"
+                  style={!s.url ? { opacity: 0.4, cursor: "default", pointerEvents: "none" } : {}}>
+                  {s.label}
+                </a>
               ))}
             </div>
           </div>
@@ -863,6 +895,28 @@ export default function App() {
           <h2 className="contact-glitch">Let's Connect</h2>
           <p className="contact-p">For speaking engagements, media inquiries, collaboration, or just to tell me what you thought of the books — reach out.</p>
           <a className="contact-link" href={`mailto:${author.email}`}>✉ {author.email}</a>
+        </div>
+      </section>
+
+      {/* COMMUNITY CTA */}
+      <section style={{
+        background: "var(--dark)", padding: "5rem 4rem", textAlign: "center",
+        position: "relative", overflow: "hidden", borderTop: "1px solid var(--border)"
+      }}>
+        <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse 60% 80% at 50% 50%,rgba(0,212,255,0.06) 0%,transparent 70%)", pointerEvents: "none" }} />
+        <div style={{ position: "relative", zIndex: 1, maxWidth: "580px", margin: "0 auto" }}>
+          <div className="sec-eyebrow" style={{ justifyContent: "center" }}><span className="sec-eyebrow-line" /><span>Join the Conversation</span></div>
+          <h2 style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: "clamp(2rem,4vw,3.5rem)", letterSpacing: "0.05em", color: "#fff", margin: "0.5rem 0 1rem", lineHeight: 1 }}>
+            Reader <span style={{ background: "linear-gradient(135deg,var(--cyan),var(--violet))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Community</span>
+          </h2>
+          <p style={{ fontFamily: "'Rajdhani',sans-serif", fontSize: "1rem", color: "var(--muted)", lineHeight: 1.7, marginBottom: "2rem", letterSpacing: "0.03em" }}>
+            Chat with other readers, share theories, drop fan art, and connect with people who get it. The community is live — come in.
+          </p>
+          <a href="/community"
+            onClick={e => { e.preventDefault(); goTo("/community"); }}
+            className="btn-glow" style={{ textDecoration: "none" }}>
+            <span>Enter Community</span> <span>→</span>
+          </a>
         </div>
       </section>
 
@@ -1238,6 +1292,46 @@ function AuthorForm({ author, onSave }) {
               Recommended: square or portrait image, at least 400×500px
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* ── Social Links ── */}
+      <div className="ff">
+        <label>Social Media Links</label>
+        <p style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:"0.75rem", color:"var(--muted)", marginBottom:"0.8rem", letterSpacing:"0.04em", lineHeight:1.6 }}>
+          Add your profile URLs. Leave blank to hide a button on the portfolio.
+        </p>
+        <div className="socials-editor">
+          {(f.socials || []).map((soc, i) => (
+            <div key={i} className="social-row">
+              <div className="social-row-icon">{["𝕏","📸","📚","✉"][i] || "🔗"}</div>
+              <input
+                className="social-row-label"
+                value={soc.label}
+                onChange={e => {
+                  const updated = [...f.socials];
+                  updated[i] = { ...updated[i], label: e.target.value };
+                  s("socials", updated);
+                }}
+                placeholder="Label"
+              />
+              <input
+                className="social-row-url"
+                value={soc.url}
+                onChange={e => {
+                  const updated = [...f.socials];
+                  updated[i] = { ...updated[i], url: e.target.value };
+                  s("socials", updated);
+                }}
+                placeholder="https://..."
+              />
+              <button className="social-row-del" onClick={() => s("socials", f.socials.filter((_, j) => j !== i))}>✕</button>
+            </div>
+          ))}
+          <button className="add-link" style={{ marginTop:"0.5rem" }}
+            onClick={() => s("socials", [...(f.socials || []), { label: "", url: "" }])}>
+            + Add Social Link
+          </button>
         </div>
       </div>
 
