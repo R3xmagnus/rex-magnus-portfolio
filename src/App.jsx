@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 
 // ══════════════════════════════════════════════
 //  ✏️  SET YOUR ADMIN PASSWORD HERE
@@ -346,7 +347,7 @@ body{
 .sec-title .col{background:linear-gradient(135deg,var(--cyan),var(--violet));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .sec-sub{font-family:'Rajdhani',sans-serif;font-size:1rem;font-weight:400;color:var(--muted);letter-spacing:0.04em;line-height:1.6}
 
-/* ── BOOKS ── */
+/* ── BOOKS ─��� */
 .books-section{background:var(--deep)}
 .books-section::before{
   content:'';position:absolute;top:0;left:0;right:0;height:1px;
@@ -979,6 +980,7 @@ export default function App() {
       {editingBook && (
         <BookForm book={editingBook === "new" ? null : editingBook} onSave={saveBook} onCancel={() => setEditingBook(null)} />
       )}
+      <SpeedInsights />
     </>
   );
 }
